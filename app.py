@@ -8,6 +8,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 try:
+    from google import genai
+except ImportError:
+    genai = None
+
+try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
@@ -17,7 +22,8 @@ load_dotenv()
 
 
 DATA_FILE = "kc_house_data.csv"
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+DEFAULT_GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
 
 st.set_page_config(
@@ -200,25 +206,40 @@ def plot_avg_price_by_zipcode(df: pd.DataFrame):
 
 
 def call_llm(prompt: str) -> str:
-    api_key = get_secret("OPENAI_API_KEY")
-    if not api_key:
-        return (
-            "Configuration manquante : ajoutez `OPENAI_API_KEY` dans le fichier `.env` "
-            "ou dans les secrets Streamlit pour activer les resumes LLM."
-        )
+    gemini_api_key = get_secret("GEMINI_API_KEY")
+    if gemini_api_key:
+        if genai is None:
+            return "La dependance `google-genai` n'est pas installee dans l'environnement Python."
 
-    if OpenAI is None:
-        return "La dependance `openai` n'est pas installee dans l'environnement Python."
+        try:
+            client = genai.Client(api_key=gemini_api_key)
+            response = client.models.generate_content(
+                model=DEFAULT_GEMINI_MODEL,
+                contents=prompt,
+            )
+            return (response.text or "").strip()
+        except Exception as exc:
+            return f"Echec de l'appel Gemini : {exc}"
 
-    try:
-        client = OpenAI(api_key=api_key)
-        response = client.responses.create(
-            model=DEFAULT_MODEL,
-            input=prompt,
-        )
-        return response.output_text.strip()
-    except Exception as exc:
-        return f"Echec de l'appel LLM : {exc}"
+    openai_api_key = get_secret("OPENAI_API_KEY")
+    if openai_api_key:
+        if OpenAI is None:
+            return "La dependance `openai` n'est pas installee dans l'environnement Python."
+
+        try:
+            client = OpenAI(api_key=openai_api_key)
+            response = client.responses.create(
+                model=DEFAULT_OPENAI_MODEL,
+                input=prompt,
+            )
+            return response.output_text.strip()
+        except Exception as exc:
+            return f"Echec de l'appel OpenAI : {exc}"
+
+    return (
+        "Configuration manquante : ajoutez `GEMINI_API_KEY` ou `OPENAI_API_KEY` "
+        "dans le fichier `.env` ou dans les secrets Streamlit pour activer les resumes LLM."
+    )
 
 
 def build_market_prompt(df: pd.DataFrame) -> str:

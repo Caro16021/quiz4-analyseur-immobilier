@@ -2,5 +2,6 @@ streamlit
 pandas
 numpy
 matplotlib
+google-genai
 openai
 python-dotenv

@@ -2,6 +2,8 @@
 venv/
 env/
 .venv/
+.python-portable/
+.python312/
 
 # Fichiers Python
 __pycache__/
@@ -18,3 +20,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Artefacts locaux d'installation / execution
+python-*.exe
+python-*.zip
+get-pip.py
+streamlit.stdout.log
+streamlit.stderr.log
+python-install.log
