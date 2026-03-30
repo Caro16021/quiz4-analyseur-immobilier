@@ -46,8 +46,23 @@ def fmt_money(value: float) -> str:
     return f"{value:,.0f} $".replace(",", " ")
 
 
+def fmt_signed_money(value: float) -> str:
+    return f"{value:+,.0f} $".replace(",", " ")
+
+
 def fmt_pct(value: float) -> str:
     return f"{value:.1f} %"
+
+
+def get_secret(name: str) -> Optional[str]:
+    env_value = os.getenv(name)
+    if env_value:
+        return env_value
+
+    try:
+        return st.secrets.get(name)
+    except Exception:
+        return None
 
 
 def build_market_filters(df: pd.DataFrame) -> pd.DataFrame:
@@ -185,11 +200,11 @@ def plot_avg_price_by_zipcode(df: pd.DataFrame):
 
 
 def call_llm(prompt: str) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = get_secret("OPENAI_API_KEY")
     if not api_key:
         return (
-            "Configuration manquante : ajoutez la variable d'environnement "
-            "`OPENAI_API_KEY` pour activer les resumes LLM."
+            "Configuration manquante : ajoutez `OPENAI_API_KEY` dans le fichier `.env` "
+            "ou dans les secrets Streamlit pour activer les resumes LLM."
         )
 
     if OpenAI is None:
@@ -245,6 +260,11 @@ def render_market_tab(df: pd.DataFrame) -> None:
     c2.metric("Prix moyen", fmt_money(df["price"].mean()))
     c3.metric("Prix median", fmt_money(df["price"].median()))
     c4.metric("Prix moyen / pi2", fmt_money(df["price_per_sqft"].mean()))
+
+    summary_cols = st.columns(3)
+    summary_cols[0].metric("% renovees", fmt_pct(df["is_renovated"].mean() * 100))
+    summary_cols[1].metric("% avec sous-sol", fmt_pct(df["has_basement"].mean() * 100))
+    summary_cols[2].metric("% front de mer", fmt_pct(df["waterfront"].mean() * 100))
 
     left, right = st.columns(2)
     with left:
@@ -313,8 +333,29 @@ def find_comparables(df: pd.DataFrame, property_row: pd.Series) -> pd.DataFrame:
         + (comps["condition"] - property_row["condition"]).abs() * 0.5
     )
 
-    comps = comps.sort_values(["distance_score", "date"], ascending=[True, False]).head(10)
-    return comps
+    comps = comps.sort_values(["distance_score", "date"], ascending=[True, False])
+
+    if len(comps) >= 5:
+        comps["comp_scope"] = "Strict"
+        return comps.head(10)
+
+    relaxed = df[
+        (df["id"] != property_row["id"])
+        & (df["zipcode"] == property_row["zipcode"])
+        & (df["bedrooms"] == property_row["bedrooms"])
+    ].copy()
+
+    relaxed["distance_score"] = (
+        (relaxed["bathrooms"] - property_row["bathrooms"]).abs()
+        + (relaxed["sqft_living"] - property_row["sqft_living"]).abs() / max(property_row["sqft_living"], 1)
+        + (relaxed["grade"] - property_row["grade"]).abs() * 0.5
+        + (relaxed["condition"] - property_row["condition"]).abs() * 0.5
+    )
+    relaxed["comp_scope"] = np.where(
+        relaxed["sqft_living"].between(low_sqft, high_sqft), "Strict", "Elargi"
+    )
+
+    return relaxed.sort_values(["distance_score", "date"], ascending=[True, False]).head(10)
 
 
 def render_property_profile(property_row: pd.Series) -> None:
@@ -421,9 +462,14 @@ def render_property_tab(df: pd.DataFrame) -> None:
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Prix moyen des comparables", fmt_money(mean_comp_price))
-    c2.metric("Ecart en $", fmt_money(gap_value))
+    c2.metric("Ecart en $", fmt_signed_money(gap_value))
     c3.metric("Ecart en %", fmt_pct(gap_pct))
     st.info(f"Statut de la propriete : {status} par rapport a son marche local.")
+    if "Elargi" in comps["comp_scope"].values:
+        st.caption(
+            "Note : moins de 5 comparables stricts etaient disponibles. "
+            "La liste a ete elargie aux maisons du meme code postal et du meme nombre de chambres."
+        )
 
     display_cols = [
         "id",
@@ -435,6 +481,7 @@ def render_property_tab(df: pd.DataFrame) -> None:
         "grade",
         "condition",
         "distance_score",
+        "comp_scope",
     ]
     table = comps[display_cols].copy()
     table["date"] = table["date"].dt.strftime("%Y-%m-%d")
